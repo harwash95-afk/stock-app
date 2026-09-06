@@ -20,6 +20,17 @@ if st.button("Analyze Stock"):
         st.subheader(f"🏢 {company_name} ({ticker})")
         st.metric(label="Current Stock Price", value=f"${current_price:,.2f} {currency}")
 
+        # --- NEWS SECTION ---
+        st.write("---")
+        st.subheader("📰 Recent Company News")
+        news = stock.news
+        if news:
+            for article in news[:3]:
+                st.write(f"- **[{article['title']}]({article['link']})**")
+                st.caption(f"Publisher: {article.get('publisher', 'Unknown')}")
+        else:
+            st.write("No recent news found.")
+
         financials = stock.financials
         balance_sheet = stock.balance_sheet
         cash_flow = stock.cashflow
@@ -27,12 +38,10 @@ if st.button("Analyze Stock"):
         st.write("---")
         st.subheader("📊 Fundamental Breakdown")
 
-        # -------------------------------------------------------------
         # 1. REVENUE GROWTH
-        # -------------------------------------------------------------
-        rev_series = financials.loc['Total Revenue'].iloc[0:3].iloc[::-1]  # 3 oldest to newest
+        rev_series = financials.loc['Total Revenue'].iloc[0:3].iloc[::-1]  
         rev_years = [d.strftime('%Y') for d in rev_series.index]
-        rev_values = [v / 1e9 for v in rev_series.values] # In Billions
+        rev_values = [v / 1e9 for v in rev_series.values] 
         
         rev_growth_y1 = ((rev_values[1] - rev_values[0]) / rev_values[0]) * 100
         rev_growth_y2 = ((rev_values[2] - rev_values[1]) / rev_values[1]) * 100
@@ -52,9 +61,7 @@ if st.button("Analyze Stock"):
             st.write(f"• Growth {rev_years[0]} ➔ {rev_years[1]}: **{rev_growth_y1:+.2f}%**")
             st.write(f"• Growth {rev_years[1]} ➔ {rev_years[2]}: **{rev_growth_y2:+.2f}%**")
 
-        # -------------------------------------------------------------
         # 2. NET PROFIT MARGIN
-        # -------------------------------------------------------------
         net_income = financials.loc['Net Income'].iloc[0] / 1e9
         latest_rev = rev_values[-1]
         net_margin = (net_income / latest_rev) * 100
@@ -69,9 +76,7 @@ if st.button("Analyze Stock"):
             st.write(f"• Most Recent Net Income: **${net_income:,.2f}B**")
             st.write(f"• Exact Net Margin: **{net_margin:.2f}%**")
 
-        # -------------------------------------------------------------
         # 3. DEBT-TO-CASH
-        # -------------------------------------------------------------
         total_debt = (balance_sheet.loc['Total Debt'].iloc[0] if 'Total Debt' in balance_sheet.index else balance_sheet.loc['Long Term Debt'].iloc[0]) / 1e9
         total_cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[0] / 1e9
         debt_ratio = total_debt / total_cash if total_cash > 0 else 999.0
@@ -86,9 +91,7 @@ if st.button("Analyze Stock"):
             st.write(f"• Cash & Cash Equivalents: **${total_cash:,.2f}B**")
             st.write(f"• Debt-to-Cash Multiplier: **{debt_ratio:.2f}x**")
 
-        # -------------------------------------------------------------
         # 4. FREE CASH FLOW (FCF)
-        # -------------------------------------------------------------
         fcf_series = cash_flow.loc['Free Cash Flow'].iloc[0:2].iloc[::-1]
         fcf_years = [d.strftime('%Y') for d in fcf_series.index]
         fcf_vals = [v / 1e9 for v in fcf_series.values]
@@ -102,12 +105,10 @@ if st.button("Analyze Stock"):
             st.write(f"• {fcf_years[0]} Free Cash Flow: **${fcf_vals[0]:,.2f}B**")
             st.write(f"• {fcf_years[1]} Free Cash Flow: **${fcf_vals[1]:,.2f}B**")
 
-        # -------------------------------------------------------------
         # 5. SHARE COUNT / DILUTION TREND
-        # -------------------------------------------------------------
         share_series = financials.loc['Diluted Average Shares'].iloc[0:3].iloc[::-1]
         share_years = [d.strftime('%Y') for d in share_series.index]
-        share_vals = [s / 1e9 for s in share_series.values] # In Billions
+        share_vals = [s / 1e9 for s in share_series.values] 
         shares_pass = (share_vals[2] <= share_vals[1]) and (share_vals[1] <= share_vals[0])
         total_share_change = ((share_vals[2] - share_vals[0]) / share_vals[0]) * 100
 
@@ -122,28 +123,34 @@ if st.button("Analyze Stock"):
             })
             st.table(df_shares)
 
-        # -------------------------------------------------------------
-        # VALUATION & TARGETS (Normalized Intrinsic Value)
-        # -------------------------------------------------------------
+        # VALUATION & TARGETS
         st.write("---")
         st.subheader("🎯 Intrinsic Valuation & Price Targets")
         
         eps = info.get("trailingEps", 0)
-        forward_eps = info.get("forwardEps", eps)
-        peg_ratio = info.get("pegRatio", None)
         
-        # Estimate intrinsic baseline: Reasonable P/E based on historical growth
-        growth_rate = min(max((rev_growth_y2 / 100), 0.05), 0.20) # Clamped between 5% and 20%
-        fair_pe = 15 + (growth_rate * 100 * 0.5) # Modest Graham/Lynch growth multiple
+        growth_rate = min(max((rev_growth_y2 / 100), 0.05), 0.20)
+        fair_pe = 15 + (growth_rate * 100 * 0.5) 
         intrinsic_fair_value = eps * fair_pe
-        
-        buy_target = intrinsic_fair_value * 0.85 # 15% Margin of Safety
-        sell_target = intrinsic_fair_value * 1.30 # 30% Premium Take-Profit
+        buy_target = intrinsic_fair_value * 0.85
+        sell_target = intrinsic_fair_value * 1.30 
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Buy Entry (15% Discount)", f"${buy_target:,.2f}")
         col2.metric("Estimated Fair Value", f"${intrinsic_fair_value:,.2f}")
         col3.metric("Sell / Trim Target (+30%)", f"${sell_target:,.2f}")
+
+        # Explicit Math Breakdown
+        with st.expander("Show Valuation Math (How this was calculated)", expanded=False):
+            st.markdown(f"""
+            **Step-by-Step Breakdown:**
+            1. **Earnings Per Share (EPS):** ${eps}
+            2. **Growth Rate Used:** {growth_rate*100:.2f}% *(Most recent revenue growth, capped between 5% and 20%)*
+            3. **Fair P/E Multiple:** 15 + ({growth_rate*100:.2f} × 0.5) = **{fair_pe:.2f}**
+            4. **Estimated Fair Value:** ${eps} (EPS) × {fair_pe:.2f} (P/E) = **${intrinsic_fair_value:.2f}**
+            5. **Buy Entry (15% Discount):** ${intrinsic_fair_value:.2f} × 0.85 = **${buy_target:.2f}**
+            6. **Sell Target (30% Premium):** ${intrinsic_fair_value:.2f} × 1.30 = **${sell_target:.2f}**
+            """)
 
         total_score = sum([rev_pass, margin_pass, debt_pass, fcf_pass, shares_pass])
 
