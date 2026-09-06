@@ -23,13 +23,29 @@ if st.button("Analyze Stock"):
         # --- NEWS SECTION ---
         st.write("---")
         st.subheader("📰 Recent Company News")
-        news = stock.news
-        if news:
-            for article in news[:3]:
-                st.write(f"- **[{article['title']}]({article['link']})**")
-                st.caption(f"Publisher: {article.get('publisher', 'Unknown')}")
-        else:
-            st.write("No recent news found.")
+        
+        try:
+            news = stock.news
+            if news:
+                count = 0
+                for article in news:
+                    if count >= 3:
+                        break
+                    
+                    title = article.get('title') or article.get('content', {}).get('title')
+                    link = article.get('link') or article.get('content', {}).get('clickThroughUrl')
+                    
+                    if title and link:
+                        publisher = article.get('publisher', 'Financial News')
+                        st.write(f"- **[{title}]({link})**")
+                        st.caption(f"Publisher: {publisher}")
+                        count += 1
+                if count == 0:
+                    st.write("No recent articles found.")
+            else:
+                st.write("No recent news found.")
+        except Exception:
+            st.write("Could not load news at this time.")
 
         financials = stock.financials
         balance_sheet = stock.balance_sheet
