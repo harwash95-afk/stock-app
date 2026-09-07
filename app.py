@@ -68,10 +68,17 @@ if st.button("Analyze Stock"):
         st.write("---")
         st.subheader("📊 Fundamental Breakdown")
 
+        # Global variables for math fallbacks
+        raw_net_income = 0
+        raw_shares = 1
+        latest_rev_raw = 0
+
+        # 1. REVENUE GROWTH
         try:
             rev_series = financials.loc['Total Revenue'].iloc[0:3].iloc[::-1]  
             rev_years = [d.strftime('%Y') for d in rev_series.index]
             rev_values = [v / 1e9 for v in rev_series.values] 
+            latest_rev_raw = rev_series.iloc[-1]
             
             rev_growth_y1 = ((rev_values[1] - rev_values[0]) / rev_values[0]) * 100
             rev_growth_y2 = ((rev_values[2] - rev_values[1]) / rev_values[1]) * 100
@@ -94,6 +101,7 @@ if st.button("Analyze Stock"):
             st.error("Missing Revenue Data on Yahoo Finance.")
             rev_pass = False; rev_growth_y2 = 5
 
+        # 2. NET PROFIT MARGIN
         try:
             raw_net_income = financials.loc['Net Income'].iloc[0]
             net_income = raw_net_income / 1e9
@@ -111,8 +119,9 @@ if st.button("Analyze Stock"):
                 st.write(f"• Exact Net Margin: **{net_margin:.2f}%**")
         except:
             st.error("Missing Margin Data on Yahoo Finance.")
-            margin_pass = False; raw_net_income = 0
+            margin_pass = False
 
+        # 3. DEBT-TO-CASH
         try:
             total_debt = (balance_sheet.loc['Total Debt'].iloc[0] if 'Total Debt' in balance_sheet.index else balance_sheet.loc['Long Term Debt'].iloc[0]) / 1e9
             total_cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[0] / 1e9
@@ -131,6 +140,7 @@ if st.button("Analyze Stock"):
             st.error("Missing Balance Sheet Data on Yahoo Finance.")
             debt_pass = False
 
+        # 4. FREE CASH FLOW (FCF)
         try:
             fcf_series = cash_flow.loc['Free Cash Flow'].iloc[0:2].iloc[::-1]
             fcf_years = [d.strftime('%Y') for d in fcf_series.index]
@@ -148,6 +158,7 @@ if st.button("Analyze Stock"):
             st.error("Missing Cash Flow Data on Yahoo Finance.")
             fcf_pass = False
 
+        # 5. SHARE COUNT / DILUTION TREND
         try:
             raw_shares = financials.loc['Diluted Average Shares'].iloc[0]
             share_series = financials.loc['Diluted Average Shares'].iloc[0:3].iloc[::-1]
@@ -168,20 +179,41 @@ if st.button("Analyze Stock"):
                 st.table(df_shares)
         except:
             st.error("Missing Share Count Data on Yahoo Finance.")
-            shares_pass = False; raw_shares = 1
+            shares_pass = False
 
         st.write("---")
         st.subheader("🎯 Intrinsic Valuation & Price Targets")
         
         try:
+            total_score = sum([rev_pass, margin_pass, debt_pass, fcf_pass, shares_pass])
+
             # Bulletproof EPS calculation manually bypassing Yahoo Info
             if raw_shares > 1 and raw_net_income != 0:
                 eps = raw_net_income / raw_shares
             else:
-                eps = info.get("trailingEps")
+                eps = info.get("trailingEps", 0)
                 
-            if not eps or eps <= 0:
-                st.warning("Valid positive EPS data missing, cannot calculate fair value.")
+            if eps is None or eps <= 0:
+                st.warning("⚠️ **NEGATIVE EARNINGS DETECTED:** This company is losing money. Standard P/E intrinsic valuation is mathematically impossible.")
+                
+                with st.expander("Show Valuation Math & Reasoning (Why this is uninvestable)", expanded=True):
+                    st.markdown(f"""
+                    **The Fundamental Breakdown:**
+                    1. **Earnings Per Share (EPS):** ${eps if eps else 0:.2f}
+                    2. **The Math Problem:** Multiplying negative earnings by any valuation multiple produces a negative share price. Stock prices cannot drop below zero.
+                    3. **The Value Investing Verdict:** If a company has negative net income, negative free cash flow, and massive share dilution, its Fair Value is effectively unmeasurable. 
+                    4. **Management Reality:** They are surviving by printing new shares and dumping them onto retail investors to pay operating expenses. Any price target generated on sales multiples for an unprofitable, diluting company is speculative guesswork.
+                    """)
+                
+                try:
+                    revenue_per_share = latest_rev_raw / raw_shares
+                    price_to_sales = current_price / revenue_per_share
+                    st.info(f"📊 **Alternative Metric (Price-to-Sales): {price_to_sales:.2f}x** (Values top-line revenue instead of profits, but this is speculative, not value investing).")
+                except:
+                    pass
+
+                st.error(f"🛑 **ACTION: AVOID / SPECULATIVE ({total_score}/5).** Unprofitable company. Extreme fundamental risk.")
+
             else:
                 growth_rate = min(max((rev_growth_y2 / 100), 0.05), 0.20)
                 fair_pe = 15 + (growth_rate * 100 * 0.5) 
@@ -204,8 +236,6 @@ if st.button("Analyze Stock"):
                     5. **Buy Entry (15% Discount):** ${intrinsic_fair_value:.2f} × 0.85 = **${buy_target:.2f}**
                     6. **Sell Target (30% Premium):** ${intrinsic_fair_value:.2f} × 1.30 = **${sell_target:.2f}**
                     """)
-
-                total_score = sum([rev_pass, margin_pass, debt_pass, fcf_pass, shares_pass])
 
                 if total_score == 5 and current_price <= buy_target:
                     st.success(f"🔥 **ACTION: BUY.** Passed 5/5 fundamental criteria and is trading below the Margin of Safety entry point.")
