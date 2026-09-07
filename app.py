@@ -12,7 +12,6 @@ if st.button("Analyze Stock"):
     try:
         stock = yf.Ticker(ticker)
         
-        # 1. BYPASS BROKEN YAHOO INFO
         try:
             info = stock.info
             company_name = info.get("longName") or info.get("shortName") or ticker
@@ -22,7 +21,6 @@ if st.button("Analyze Stock"):
             
         currency = info.get("currency", "USD")
         
-        # Force fetch the real price using market history instead of the broken info dictionary
         hist = stock.history(period="5d")
         if not hist.empty:
             current_price = hist['Close'].iloc[-1]
@@ -32,7 +30,6 @@ if st.button("Analyze Stock"):
         st.subheader(f"🏢 {company_name} ({ticker})")
         st.metric(label="Current Stock Price", value=f"${current_price:,.2f} {currency}")
 
-        # --- FIX NESTED YAHOO NEWS LINKS ---
         st.write("---")
         st.subheader("📰 Recent Company News")
         
@@ -45,9 +42,8 @@ if st.button("Analyze Stock"):
                         break
                     
                     title = article.get('title') or article.get('content', {}).get('title')
-                    
-                    # Crack open Yahoo's new dictionary format to get the raw URL
                     raw_link = article.get('link') or article.get('content', {}).get('clickThroughUrl')
+                    
                     if isinstance(raw_link, dict):
                         link = raw_link.get('url', '#')
                     else:
@@ -72,7 +68,6 @@ if st.button("Analyze Stock"):
         st.write("---")
         st.subheader("📊 Fundamental Breakdown")
 
-        # 1. REVENUE GROWTH
         try:
             rev_series = financials.loc['Total Revenue'].iloc[0:3].iloc[::-1]  
             rev_years = [d.strftime('%Y') for d in rev_series.index]
@@ -99,9 +94,9 @@ if st.button("Analyze Stock"):
             st.error("Missing Revenue Data on Yahoo Finance.")
             rev_pass = False; rev_growth_y2 = 5
 
-        # 2. NET PROFIT MARGIN
         try:
-            net_income = financials.loc['Net Income'].iloc[0] / 1e9
+            raw_net_income = financials.loc['Net Income'].iloc[0]
+            net_income = raw_net_income / 1e9
             latest_rev = rev_values[-1]
             net_margin = (net_income / latest_rev) * 100
             margin_pass = net_margin >= 15.0
@@ -116,9 +111,8 @@ if st.button("Analyze Stock"):
                 st.write(f"• Exact Net Margin: **{net_margin:.2f}%**")
         except:
             st.error("Missing Margin Data on Yahoo Finance.")
-            margin_pass = False
+            margin_pass = False; raw_net_income = 0
 
-        # 3. DEBT-TO-CASH
         try:
             total_debt = (balance_sheet.loc['Total Debt'].iloc[0] if 'Total Debt' in balance_sheet.index else balance_sheet.loc['Long Term Debt'].iloc[0]) / 1e9
             total_cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[0] / 1e9
@@ -137,7 +131,6 @@ if st.button("Analyze Stock"):
             st.error("Missing Balance Sheet Data on Yahoo Finance.")
             debt_pass = False
 
-        # 4. FREE CASH FLOW (FCF)
         try:
             fcf_series = cash_flow.loc['Free Cash Flow'].iloc[0:2].iloc[::-1]
             fcf_years = [d.strftime('%Y') for d in fcf_series.index]
@@ -155,8 +148,8 @@ if st.button("Analyze Stock"):
             st.error("Missing Cash Flow Data on Yahoo Finance.")
             fcf_pass = False
 
-        # 5. SHARE COUNT / DILUTION TREND
         try:
+            raw_shares = financials.loc['Diluted Average Shares'].iloc[0]
             share_series = financials.loc['Diluted Average Shares'].iloc[0:3].iloc[::-1]
             share_years = [d.strftime('%Y') for d in share_series.index]
             share_vals = [s / 1e9 for s in share_series.values] 
@@ -175,16 +168,20 @@ if st.button("Analyze Stock"):
                 st.table(df_shares)
         except:
             st.error("Missing Share Count Data on Yahoo Finance.")
-            shares_pass = False
+            shares_pass = False; raw_shares = 1
 
-        # VALUATION & TARGETS
         st.write("---")
         st.subheader("🎯 Intrinsic Valuation & Price Targets")
         
         try:
-            eps = info.get("trailingEps")
-            if not eps:
-                st.warning("EPS data missing from Yahoo, cannot calculate fair value.")
+            # Bulletproof EPS calculation manually bypassing Yahoo Info
+            if raw_shares > 1 and raw_net_income != 0:
+                eps = raw_net_income / raw_shares
+            else:
+                eps = info.get("trailingEps")
+                
+            if not eps or eps <= 0:
+                st.warning("Valid positive EPS data missing, cannot calculate fair value.")
             else:
                 growth_rate = min(max((rev_growth_y2 / 100), 0.05), 0.20)
                 fair_pe = 15 + (growth_rate * 100 * 0.5) 
@@ -200,10 +197,10 @@ if st.button("Analyze Stock"):
                 with st.expander("Show Valuation Math (How this was calculated)", expanded=False):
                     st.markdown(f"""
                     **Step-by-Step Breakdown:**
-                    1. **Earnings Per Share (EPS):** ${eps}
+                    1. **Earnings Per Share (EPS):** ${eps:.2f} *(Calculated as Net Income / Total Shares)*
                     2. **Growth Rate Used:** {growth_rate*100:.2f}% *(Most recent revenue growth, capped between 5% and 20%)*
                     3. **Fair P/E Multiple:** 15 + ({growth_rate*100:.2f} × 0.5) = **{fair_pe:.2f}**
-                    4. **Estimated Fair Value:** ${eps} (EPS) × {fair_pe:.2f} (P/E) = **${intrinsic_fair_value:.2f}**
+                    4. **Estimated Fair Value:** ${eps:.2f} (EPS) × {fair_pe:.2f} (P/E) = **${intrinsic_fair_value:.2f}**
                     5. **Buy Entry (15% Discount):** ${intrinsic_fair_value:.2f} × 0.85 = **${buy_target:.2f}**
                     6. **Sell Target (30% Premium):** ${intrinsic_fair_value:.2f} × 1.30 = **${sell_target:.2f}**
                     """)
@@ -219,7 +216,7 @@ if st.button("Analyze Stock"):
                 else:
                     st.error(f"🛑 **ACTION: WAIT / PASS.** Company scored {total_score}/5 or the current market price (${current_price:,.2f}) does not offer a margin of safety.")
         except Exception as e:
-            st.error("Valuation math failed due to missing info from Yahoo Finance.")
+            st.error("Valuation math failed due to missing financial data.")
 
     except Exception as e:
         st.error(f"Unable to process full financial dataset for {ticker}. Error details: {e}")
